@@ -1,0 +1,18 @@
+#pragma kernel CSMain
+
+Texture2D<float4> source;
+RWTexture2D<float4> result;
+uint width;
+uint height;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= width || id.y >= height) return;
+
+    float4 col = source[id.xy];
+
+    col.rgb = 1.0 - col.rgb;
+
+    result[id.xy] = col;
+}

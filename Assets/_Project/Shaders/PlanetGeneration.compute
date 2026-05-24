@@ -1,0 +1,66 @@
+#pragma kernel CSMain
+
+StructuredBuffer<float3> vertices;
+RWStructuredBuffer<float> heights;
+uint numVertices;
+
+float noiseScale;
+float continentScale;
+float continentStrength;
+float mountainScale;
+float mountainStrength;
+float oceanDepth;
+float oceanFloor;
+int noiseOctaves;
+float lacunarity;
+float persistence;
+
+float hash(float3 p) {
+    p = frac(p * float3(443.8975, 397.2973, 491.1871));
+    p += dot(p.zxy, p.yxz + 19.19);
+    return frac(p.x * p.y * p.z);
+}
+
+float noise(float3 p) {
+    float3 i = floor(p);
+    float3 f = frac(p);
+    float3 u = f * f * (3.0 - 2.0 * f);
+    return lerp(
+        lerp(lerp(hash(i + float3(0,0,0)), hash(i + float3(1,0,0)), u.x),
+             lerp(hash(i + float3(0,1,0)), hash(i + float3(1,1,0)), u.x), u.y),
+        lerp(lerp(hash(i + float3(0,0,1)), hash(i + float3(1,0,1)), u.x),
+             lerp(hash(i + float3(0,1,1)), hash(i + float3(1,1,1)), u.x), u.y),
+        u.z
+    );
+}
+
+float fbm(float3 p, int octaves) {
+    float value = 0;
+    float amplitude = 1;
+    float frequency = 1;
+    float maxValue = 0;
+    for (int o = 0; o < octaves; o++) {
+        value += noise(p * frequency) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return value / maxValue;
+}
+
+float planetTerrain(float3 pos) {
+    float continents = fbm(pos * continentScale, noiseOctaves) - 0.5;
+    float mountains = fbm(pos * mountainScale, noiseOctaves) * mountainStrength;
+    mountains *= smoothstep(0.0, 0.2, continents);
+    float ocean = min(continents, 0) * oceanDepth;
+    ocean = max(ocean, -oceanFloor);
+    float land = max(continents, 0) * continentStrength;
+    return land + mountains + ocean;
+}
+
+[numthreads(512, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= numVertices) return;
+    float3 pos = vertices[id.x];
+    heights[id.x] = planetTerrain(pos * noiseScale);
+}

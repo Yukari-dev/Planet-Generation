@@ -1,0 +1,90 @@
+#pragma kernel CSMain
+
+struct Crater {
+    float3 center;
+    float radius;
+};
+
+StructuredBuffer<float3> vertices;
+StructuredBuffer<Crater> craters;
+RWStructuredBuffer<float> heights;
+uint numVertices;
+uint numCraters;
+float rimWidth;
+float rimSteepness;
+float floorHeight;
+float smoothness;
+
+float noiseScale;
+float noiseStrength;
+int noiseOctaves;
+float lacunarity;
+float persistence;
+
+float _Time;
+
+float smoothMax(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return lerp(a, b, h) + k * h * (1.0 - h);
+}
+
+float smoothMin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return lerp(b, a, h) - k * h * (1.0 - h);
+}
+
+float hash(float3 p) {
+    p = frac(p * float3(443.8975, 397.2973, 491.1871));
+    p += dot(p.zxy, p.yxz + 19.19);
+    return frac(p.x * p.y * p.z);
+}
+
+float noise(float3 p) {
+    float3 i = floor(p);
+    float3 f = frac(p);
+    float3 u = f * f * (3.0 - 2.0 * f);
+
+    return lerp(
+        lerp(lerp(hash(i + float3(0,0,0)), hash(i + float3(1,0,0)), u.x),
+             lerp(hash(i + float3(0,1,0)), hash(i + float3(1,1,0)), u.x), u.y),
+        lerp(lerp(hash(i + float3(0,0,1)), hash(i + float3(1,0,1)), u.x),
+             lerp(hash(i + float3(0,1,1)), hash(i + float3(1,1,1)), u.x), u.y),
+        u.z
+    );
+}
+
+float fbm(float3 p, int octaves, float lacunarity, float persistence) {
+    float value = 0;
+    float amplitude = 1;
+    float frequency = 1;
+    float maxValue = 0;
+
+    for (int o = 0; o < octaves; o++) {
+        value += noise(p * frequency) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return value / maxValue;
+}
+
+[numthreads(512, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= numVertices) return;
+    float3 vertexPos = vertices[id.x];
+    float craterHeight = 0;
+
+    for (uint i = 0; i < numCraters; i++) {
+        float x = length(vertexPos - craters[i].center) / craters[i].radius;
+
+        float cavity = x * x - 1;
+        float rimX = min(x - 1 - rimWidth, 0);
+        float rim = rimSteepness * rimX * rimX;
+
+        float craterShape = max(cavity, floorHeight); 
+        craterShape = min(craterShape, rim);
+        craterHeight += craterShape * craters[i].radius;
+    }
+
+    heights[id.x] = craterHeight + fbm(vertexPos * noiseScale, noiseOctaves, lacunarity, persistence) * noiseStrength;
+}
